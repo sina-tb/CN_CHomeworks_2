@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string>
 #include <fstream>
+#include <unistd.h>
+#include <cstring>
 
 #include "ns3/core-module.h"
 #include "ns3/point-to-point-module.h"
@@ -212,6 +214,8 @@ static const int MAX_MAPPER = 3;
 int
 main (int argc, char *argv[])
 {
+    // Packet::EnablePrinting();
+    // PacketMetadata::Enable();
     double error = 0.000001;
     string bandwidth = "1Mbps";
     bool verbose = true;
@@ -369,7 +373,7 @@ static void GenerateTraffic (Ptr<Socket> socket, uint16_t data)
     m.SetData(data);
 
     packet->AddHeader (m);
-    // packet->Print (std::cout);
+    // packet->Print (std::cout); does not work without one of the two functions commented at the top of int main
     socket->Send (packet);
 
     Simulator::Schedule (Seconds (0.1), &GenerateTraffic, socket, rand() % 26);
@@ -378,7 +382,7 @@ static void GenerateTraffic (Ptr<Socket> socket, uint16_t data)
 void
 client::StartApplication (void)
 {
-    Ptr<Socket> sock = Socket::CreateSocket (GetNode (), UdpSocketFactory::GetTypeId ());
+    Ptr<Socket> sock = Socket::CreateSocket (GetNode (), TcpSocketFactory::GetTypeId ());
     InetSocketAddress sockAddr (ip.GetAddress(0), port);
     sock->Connect (sockAddr);
 
@@ -400,11 +404,11 @@ void
 master::StartApplication (void)
 {
     socket = Socket::CreateSocket (GetNode (),
-                UdpSocketFactory::GetTypeId ());
+                TcpSocketFactory::GetTypeId ());
     InetSocketAddress local = InetSocketAddress (ip.GetAddress(0), port);
     socket->Bind (local);
     Ptr<Node> nodeptr = socket->GetNode ();
-    // Socket::Listen();
+    socket->Listen();
     socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
 }
 
@@ -421,8 +425,9 @@ master::HandleRead (Ptr<Socket> socket)
         }
 
         MyHeader destinationHeader;
+        // packet->Print(std::cout); simply does not work
         packet->RemoveHeader (destinationHeader);
-        destinationHeader.Print(std::cout);
+        // destinationHeader.Print(std::cout); simply does not work
     }
 }
 
