@@ -3,8 +3,6 @@
 #include <stdio.h>
 #include <string>
 #include <fstream>
-#include <unistd.h>
-#include <cstring>
 
 #include "ns3/core-module.h"
 #include "ns3/point-to-point-module.h"
@@ -174,10 +172,14 @@ public:
 private:
     virtual void StartApplication (void);
     void HandleRead (Ptr<Socket> socket);
+    void ConnectToMappers(Ipv4InterfaceContainer& m_ips);
+    // void SendToMappers()
+    void HandleSend (Ptr<Socket> socket);
 
-    uint16_t port;
-    Ipv4InterfaceContainer ip;
-    Ptr<Socket> socket;
+    uint16_t _port;
+    Ipv4InterfaceContainer _ip;
+    Ptr<Socket> _rec_socket;
+    vector< Ptr<Socket> > _mapper_sockets;
 };
 
 
@@ -190,26 +192,28 @@ public:
 private:
     virtual void StartApplication (void);
 
-    uint16_t port;
-    Ptr<Socket> socket;
-    Ipv4InterfaceContainer ip;
+    uint16_t _port;
+    // Ptr<Socket> _socket; not needed
+    Ipv4InterfaceContainer _ip;
 };
 
 
-// class mapper: public Application
-// {
-// public:
-//     mapper(uint16_t port, Ipv4InterfaceContainer& ip);
-//     virtual ~mapper();
-// private:
-//     virtual void StartApplication();
+class mapper: public Application
+{
+public:
+    mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i);
+    virtual ~mapper();
+private:
+    virtual void StartApplication();
 
-//     uint16_t _port;
-//     Ptr<Socket> _socket;
-//     Ipv4InterfaceContainer _ip;
-// };
+    uint16_t _port;
+    Ptr<Socket> _rec_socket;
+    Ptr<Socket> _send_socket;
+    Ipv4InterfaceContainer _ip;
+    uint8_t _mapper_number;
+};
 
-static const int MAX_MAPPER = 3;
+static const int MAX_MAPPER = 1;
 
 int
 main (int argc, char *argv[])
@@ -269,7 +273,11 @@ main (int argc, char *argv[])
     mac.SetType ("ns3::ApWifiMac", "Ssid", SsidValue (ssid));
     staDeviceMaster = wifi.Install (phy, mac, wifiStaNodeMaster);
 
-mac.SetType ("ns3::StaWifiMac","Ssid", SsidValue (ssid), "ActiveProbing", BooleanValue (false));
+    mac.SetType ("ns3::StaWifiMac",
+                "Ssid", SsidValue (ssid),
+                "ActiveProbing",
+                BooleanValue (false));
+
     staDeviceClient = wifi.Install (phy, mac, wifiStaNodeClient);
     mapperNetDeviceConatainer = wifi.Install (phy, mac, mapperNodeContainer);
     
@@ -290,7 +298,8 @@ mac.SetType ("ns3::StaWifiMac","Ssid", SsidValue (ssid), "ActiveProbing", Boolea
                                    "LayoutType", StringValue ("RowFirst"));
     // Walking mobility
     mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                               "Bounds", RectangleValue (Rectangle (-50, 50, -50, 50)));
+                               "Bounds",
+                                RectangleValue (Rectangle (-50, 50, -50, 50)));
     mobility.Install (wifiStaNodeClient);
 
     // Standstill mobility
@@ -315,7 +324,7 @@ mac.SetType ("ns3::StaWifiMac","Ssid", SsidValue (ssid), "ActiveProbing", Boolea
     staNodeClientInterface = address.Assign (staDeviceClient);
     staNodesMasterInterface = address.Assign (staDeviceMaster);
     mapperIPInterface = address.Assign (mapperNetDeviceConatainer);
-
+    
     Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
     uint16_t port = 1102;
@@ -332,12 +341,16 @@ mac.SetType ("ns3::StaWifiMac","Ssid", SsidValue (ssid), "ActiveProbing", Boolea
     masterApp->SetStartTime (Seconds (0.0));
     masterApp->SetStopTime (Seconds (duration));  
 
-
     // Creating Mapper
-    // Ptr<mapper> mapperApp = CreateObject<mapper> (port, mapperIPInterface);
-    // mapperNodeContainer.Get (0)->AddApplication(mapperApp); // first Testing then running, for(){...} 
-    // mapperApp->SetStartTime (Seconds (0.0));
-    // mapperApp->SetStopTime (Seconds (duration));
+    for (int mapper_num = 0; mapper_num < MAX_MAPPER; mapper_num++)
+    {
+        Ptr<mapper> mapperApp = CreateObject<mapper> (port,
+                                                    mapperIPInterface,
+                                                    mapper_num);
+        mapperNodeContainer.Get (0)->AddApplication(mapperApp);
+        mapperApp->SetStartTime (Seconds (0.0));
+        mapperApp->SetStopTime (Seconds (duration));
+    }
 
     // Logging
     NS_LOG_INFO ("Run Simulation");
@@ -356,8 +369,8 @@ mac.SetType ("ns3::StaWifiMac","Ssid", SsidValue (ssid), "ActiveProbing", Boolea
 }
 
 client::client (uint16_t port, Ipv4InterfaceContainer& ip)
-        : port (port),
-          ip (ip)
+        : _port (port),
+          _ip (ip)
 {
     std::srand (time(0));
 }
@@ -382,16 +395,17 @@ static void GenerateTraffic (Ptr<Socket> socket, uint16_t data)
 void
 client::StartApplication (void)
 {
-    Ptr<Socket> sock = Socket::CreateSocket (GetNode (), TcpSocketFactory::GetTypeId ());
-    InetSocketAddress sockAddr (ip.GetAddress(0), port);
+    Ptr<Socket> sock = Socket::CreateSocket (GetNode (),
+                        TcpSocketFactory::GetTypeId ());
+    InetSocketAddress sockAddr (_ip.GetAddress(0), _port);
     sock->Connect (sockAddr);
 
     GenerateTraffic (sock, 0);
 }
 
 master::master (uint16_t port, Ipv4InterfaceContainer& ip)
-        : port (port),
-          ip (ip)
+        : _port (port),
+          _ip (ip)
 {
     std::srand (time(0));
 }
@@ -403,13 +417,14 @@ master::~master ()
 void
 master::StartApplication (void)
 {
-    socket = Socket::CreateSocket (GetNode (),
-                TcpSocketFactory::GetTypeId ());
-    InetSocketAddress local = InetSocketAddress (ip.GetAddress(0), port);
-    socket->Bind (local);
-    Ptr<Node> nodeptr = socket->GetNode ();
-    socket->Listen();
-    socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
+    _rec_socket = Socket::CreateSocket (GetNode (),
+                    UdpSocketFactory::GetTypeId ());
+    InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
+    _rec_socket->Bind (local);
+    // Ptr<Node> nodeptr = _rec_socket->GetNode (); not needed
+    // ConnectToMappers()
+    _rec_socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
+    // socket->SetSendCallback (MakeCallback (&master::HandleSend, this));
 }
 
 void 
@@ -428,16 +443,35 @@ master::HandleRead (Ptr<Socket> socket)
         // packet->Print(std::cout); simply does not work
         packet->RemoveHeader (destinationHeader);
         // destinationHeader.Print(std::cout); simply does not work
+
+        // send to 
     }
 }
 
-// mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip)
-// {
-//     Ptr<Socket> _socket = Socket::CreateSocket (
-//                                     GetNode ()
-//                                     ,TcpSocketFactory::GetTypeId ());
-// }
+void master::ConnectToMappers(Ipv4InterfaceContainer& m_ips)
+{
+    for (int i_s = 0; i_s < m_ips.GetN(); i_s++)
+    {
+        Ptr<Socket> i_socket = Socket::CreateSocket (GetNode(), 
+                                TcpSocketFactory::GetTypeId());
+        i_socket->Connect(InetSocketAddress(m_ips.GetAddress(i_s), _port));
+        _mapper_sockets.push_back(i_socket);
+    }
+}
 
-// void mapper::StartApplication()
-// {
-// }
+mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i)
+        :   _port (port),
+            _ip (ip),
+            _mapper_number (i)
+{
+    _rec_socket = Socket::CreateSocket(GetNode (),
+                    TcpSocketFactory::GetTypeId());
+    InetSocketAddress sockadr = InetSocketAddress (_ip.GetAddress(i), _port);
+    _rec_socket->Bind (sockadr);
+    _rec_socket->Listen();
+}
+
+void mapper::StartApplication()
+{
+    // _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead));
+}
