@@ -26,3 +26,10 @@ In this project, the throughput have been calculated for each flow.
 ## Averegae end-to-end delay ##
 The _delay_ corresponds to how long it takes a message to travel from one end of a network to another.
 Here just like _Throughput_ the calculations are printed for each flow.
+
+## The Hard Coded Table ##
+
+![Screenshot from 2023-04-20 21-43-12](https://user-images.githubusercontent.com/88041997/233453112-e3ab9029-b8f1-4f3c-89e2-bdd992d3df4d.png)
+ 
+ ## Corresponding Result ##
+![Screenshot from 2023-04-20 21-45-39](https://user-images.githubusercontent.com/88041997/233453155-4beef10f-7bc9-4199-aabe-c91d152bac65.png)
