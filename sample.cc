@@ -181,6 +181,7 @@ private:
     Ipv4InterfaceContainer _node_ip;
     Ptr<Socket> _rec_socket;
     vector< Ptr<Socket> > _mapper_sockets;
+    Ptr<Socket> _send_so;
 };
 
 
@@ -212,7 +213,8 @@ public:
     virtual ~mapper();
 private:
     virtual void StartApplication ();
-    void HandleRead (Ptr<Socket> socket);
+    void HandleRead (Ptr<Socket>socket);
+    void HandleAccept(Ptr<Socket> socket, const Address& from);
     void InitMap();
 
     uint16_t _port;
@@ -224,12 +226,12 @@ private:
     std::unordered_map<uint16_t, char>  _umap;
 };
 
-static const int MAX_MAPPER = 1;
+static const int MAX_MAPPER = 3;
 
 int
 main (int argc, char *argv[])
 {
-    // Packet::EnablePrinting();
+    Packet::EnablePrinting();
     // PacketMetadata::Enable();
     double error = 0.000001;
     string bandwidth = "1Mbps";
@@ -455,13 +457,21 @@ master::~master ()
 void
 master::StartApplication (void)
 {
+    int rec_bind, send_con;
     _rec_socket = Socket::CreateSocket (GetNode (),
                     UdpSocketFactory::GetTypeId ());
     InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
-    _rec_socket->Bind (local);
+    rec_bind = _rec_socket->Bind (local);
+    cout << rec_bind <<endl;
+    _send_so = Socket::CreateSocket (GetNode(),
+                TcpSocketFactory::GetTypeId());
+    InetSocketAddress send_sockadr = InetSocketAddress(_node_ip.GetAddress(0), _port);
+    send_con = _send_so->Connect(send_sockadr);
+    cout << send_con << endl;
     // Ptr<Node> nodeptr = _rec_socket->GetNode (); not needed
     _rec_socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
     ConnectToMappers(_node_ip);
+
     // socket->SetSendCallback (MakeCallback (&master::HandleSend, this));
 
 }
@@ -484,11 +494,18 @@ master::HandleRead (Ptr<Socket> socket)
         packet->RemoveHeader (destinationHeader);
         // packet->Print(std::cout);
         uint16_t data = destinationHeader.GetData();
+
         // destinationHeader.Print(std::cout);
         // destinationHeader.Print(std::cout); simply does not work
 
         // send to 
-        HandleSend(data);
+        MyHeader Sendnode;
+        Sendnode.SetData(data);
+        // Sendnode.Print(std::cout);
+        Ptr<Packet> pac = new Packet();
+        packet->AddHeader(Sendnode);
+        _send_so->Send(pac);
+        // HandleSend(data);
     }
 }
 
@@ -499,10 +516,11 @@ void master::HandleSend(uint16_t data)
     // Sendnode.Print(std::cout);
     Ptr<Packet> packet = new Packet();
     packet->AddHeader(Sendnode);
-
+    int test;
     for(int i = 0; i < MAX_MAPPER; i++)
     {
-        _mapper_sockets [i] -> Send (packet);
+        test = _mapper_sockets [i] -> Send (packet);
+        cout << test << endl;
     }
 }
 
@@ -527,27 +545,29 @@ mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i, Ipv4Interfa
 
 void mapper::StartApplication()
 {
+
+    int rec_bind, rec_lis;
     InitMap();
    _rec_socket = Socket::CreateSocket(GetNode (),
-                TcpSocketFactory::GetTypeId());
+                    TcpSocketFactory::GetTypeId());
     InetSocketAddress sockadr = InetSocketAddress (_ip.GetAddress(_mapper_number), _port);
-    _rec_socket->Bind (sockadr);
-    _rec_socket->Listen();
-    
+    rec_bind = _rec_socket->Bind (sockadr);
+    cout << rec_bind;
+    rec_lis = _rec_socket->Listen();
+    cout << rec_lis;
+    _rec_socket->SetAcceptCallback(MakeNullCallback<bool,
+                                        Ptr<Socket>,
+                                        const Address&>(),
+                               MakeCallback(&mapper::HandleAccept, this));
     _send_socket = Socket::CreateSocket(GetNode (),
                     UdpSocketFactory::GetTypeId ());
     InetSocketAddress cli_sockadr = InetSocketAddress (_client_ip.GetAddress(0), _port);
     _send_socket->Connect(cli_sockadr);
-    _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead, this));
+    // _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead, this));
 }
 
-// static void SendMappedData (Ptr<Socket> sock, char m_data)
-// {
-//     Ptr<Packet> packet = new Packet();
 
-// }
-
-void mapper::HandleRead (Ptr<Socket> socket)
+void mapper::HandleRead (Ptr<Socket>socket)
 {
     Ptr<Packet> packet;
 
@@ -557,7 +577,7 @@ void mapper::HandleRead (Ptr<Socket> socket)
         {
             break;
         }
-
+        packet->Print(std::cout);
         MyHeader receiverHeader;
 
         packet->RemoveHeader (receiverHeader);
@@ -565,19 +585,27 @@ void mapper::HandleRead (Ptr<Socket> socket)
 
         uint16_t test = receiverHeader.GetData();
         char sendChar = _umap[test];
-        uint16_t sendData = static_cast<uint16_t>(sendChar);        
-        
-        MyHeader sendHeader;
-        sendHeader.SetData (sendData);
-        // sendHeader.Print(std::cout);
+        if(sendChar != 0)
+        {
+            uint16_t sendData = static_cast<uint16_t>(sendChar);        
 
-        Ptr<Packet> sendPacket = new Packet();
-        sendPacket->AddHeader (sendHeader);            
+            MyHeader sendHeader;
+            sendHeader.SetData (sendData);
 
-        _send_socket->Send (sendPacket);
+            Ptr<Packet> sendPacket = new Packet();
+            sendPacket->AddHeader (sendHeader);            
+            sendHeader.Print(std::cout);
+            sendPacket->Print(std::cout);
+            _send_socket->Send (sendPacket);
+        }
     }
 }
 
+
+void mapper::HandleAccept(Ptr<Socket> socket, const Address& from)
+{
+    socket->SetRecvCallback(MakeCallback(&mapper::HandleRead, this));
+}
 
 void mapper::InitMap()
 {
@@ -593,6 +621,9 @@ void mapper::InitMap()
         _umap[7] = 'h';
         _umap[8] = 'i';
         _umap[9] = 'j';
+    }
+    else if(_mapper_number == 1)
+    {
         _umap[10] = 'k';
         _umap[11] = 'l';
         _umap[12] = 'm';
@@ -604,19 +635,14 @@ void mapper::InitMap()
         _umap[18] = 's';
         _umap[19] = 't';
         _umap[20] = 'u';
+    }
+    else if(_mapper_number == 2)
+    {
         _umap[21] = 'v';
         _umap[22] = 'w';
         _umap[23] = 'x';
         _umap[24] = 'y';
         _umap[25] = 'z';
-    }
-    else if(_mapper_number == 1)
-    {
-
-    }
-    else if(_mapper_number == 2)
-    {
-
     }
     else
     {
