@@ -167,17 +167,18 @@ MyHeader::GetData (void) const
 class master : public Application
 {
 public:
-    master (uint16_t port, Ipv4InterfaceContainer& ip);
+    master (uint16_t port, Ipv4InterfaceContainer& ip,Ipv4InterfaceContainer& node_ip);
     virtual ~master ();
 private:
     virtual void StartApplication (void);
     void HandleRead (Ptr<Socket> socket);
     void ConnectToMappers(Ipv4InterfaceContainer& m_ips);
     // void SendToMappers()
-    void HandleSend (Ptr<Socket> socket);
+    void HandleSend (uint16_t data);
 
     uint16_t _port;
     Ipv4InterfaceContainer _ip;
+    Ipv4InterfaceContainer _node_ip;
     Ptr<Socket> _rec_socket;
     vector< Ptr<Socket> > _mapper_sockets;
 };
@@ -336,7 +337,7 @@ main (int argc, char *argv[])
     clientApp->SetStopTime (Seconds (duration));  
 
     // Creating Master
-    Ptr<master> masterApp = CreateObject<master> (port, staNodesMasterInterface);
+    Ptr<master> masterApp = CreateObject<master> (port, staNodesMasterInterface, mapperIPInterface);
     wifiStaNodeMaster.Get (0)->AddApplication (masterApp);
     masterApp->SetStartTime (Seconds (0.0));
     masterApp->SetStopTime (Seconds (duration));  
@@ -347,7 +348,7 @@ main (int argc, char *argv[])
         Ptr<mapper> mapperApp = CreateObject<mapper> (port,
                                                     mapperIPInterface,
                                                     mapper_num);
-        mapperNodeContainer.Get (0)->AddApplication(mapperApp);
+        mapperNodeContainer.Get (mapper_num)->AddApplication(mapperApp);
         mapperApp->SetStartTime (Seconds (0.0));
         mapperApp->SetStopTime (Seconds (duration));
     }
@@ -367,6 +368,8 @@ main (int argc, char *argv[])
 
     return 0;
 }
+
+
 
 client::client (uint16_t port, Ipv4InterfaceContainer& ip)
         : _port (port),
@@ -403,9 +406,10 @@ client::StartApplication (void)
     GenerateTraffic (sock, 0);
 }
 
-master::master (uint16_t port, Ipv4InterfaceContainer& ip)
+master::master (uint16_t port, Ipv4InterfaceContainer& ip,Ipv4InterfaceContainer& node_ip)
         : _port (port),
-          _ip (ip)
+          _ip (ip),
+          _node_ip (node_ip)
 {
     std::srand (time(0));
 }
@@ -422,9 +426,10 @@ master::StartApplication (void)
     InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
     _rec_socket->Bind (local);
     // Ptr<Node> nodeptr = _rec_socket->GetNode (); not needed
-    // ConnectToMappers()
     _rec_socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
+    ConnectToMappers(_node_ip);
     // socket->SetSendCallback (MakeCallback (&master::HandleSend, this));
+
 }
 
 void 
@@ -442,15 +447,31 @@ master::HandleRead (Ptr<Socket> socket)
         MyHeader destinationHeader;
         // packet->Print(std::cout); simply does not work
         packet->RemoveHeader (destinationHeader);
+        uint16_t data = destinationHeader.GetData();
         // destinationHeader.Print(std::cout); simply does not work
 
         // send to 
+        HandleSend(data);
+    }
+}
+
+void master::HandleSend(uint16_t data)
+{
+    MyHeader Sendnode;
+    Sendnode.SetData(data);
+    Sendnode.Print(std::cout);
+    Ptr<Packet> packet = new Packet();
+    packet->AddHeader(Sendnode);
+
+    for(int i = 0; i < MAX_MAPPER; i++)
+    {
+        _mapper_sockets [i] -> Send (packet);
     }
 }
 
 void master::ConnectToMappers(Ipv4InterfaceContainer& m_ips)
 {
-    for (int i_s = 0; i_s < m_ips.GetN(); i_s++)
+    for (uint32_t i_s = 0; i_s < m_ips.GetN(); i_s++)
     {
         Ptr<Socket> i_socket = Socket::CreateSocket (GetNode(), 
                                 TcpSocketFactory::GetTypeId());
@@ -474,4 +495,8 @@ mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i)
 void mapper::StartApplication()
 {
     // _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead));
+}
+
+mapper::~mapper()
+{
 }
