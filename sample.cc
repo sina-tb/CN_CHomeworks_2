@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string>
 #include <fstream>
+#include <unordered_map>
 
 #include "ns3/core-module.h"
 #include "ns3/point-to-point-module.h"
@@ -352,16 +353,13 @@ main (int argc, char *argv[])
     masterApp->SetStopTime (Seconds (duration));  
 
     // Creating Mapper
-    for (uint8_t mapper_num = 0; mapper_num < MAX_MAPPER; mapper_num++)
-    {
         Ptr<mapper> mapperApp = CreateObject<mapper> (port,
                                                     mapperIPInterface,
-                                                    mapper_num,
+                                                    0,
                                                     staNodeClientInterface);
-        mapperNodeContainer.Get (mapper_num)->AddApplication(mapperApp);
+        mapperNodeContainer.Get (0)->AddApplication(mapperApp);
         mapperApp->SetStartTime (Seconds (0.0));
         mapperApp->SetStopTime (Seconds (duration));
-    }
 
     // Logging
     NS_LOG_INFO ("Run Simulation");
@@ -411,14 +409,14 @@ client::StartApplication (void)
 {
     Ptr<Socket> sock = Socket::CreateSocket (GetNode (),
                         UdpSocketFactory::GetTypeId ());
-    InetSocketAddress sockAddr (_self_ip.GetAddress(0), _port);
+    InetSocketAddress sockAddr (_ip.GetAddress(0), _port);
     sock->Connect (sockAddr);
 
     GenerateTraffic (sock, 0);
 
     _rec_socket = Socket::CreateSocket (GetNode (),
                     UdpSocketFactory::GetTypeId ());
-    InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
+    InetSocketAddress local = InetSocketAddress (_self_ip.GetAddress(0), _port);
     _rec_socket->Bind (local);
     _rec_socket->SetRecvCallback (MakeCallback (&client::HandleRead, this));
 }
@@ -482,8 +480,11 @@ master::HandleRead (Ptr<Socket> socket)
 
         MyHeader destinationHeader;
         // packet->Print(std::cout); simply does not work
+        // packet->Print(std::cout);
         packet->RemoveHeader (destinationHeader);
+        // packet->Print(std::cout);
         uint16_t data = destinationHeader.GetData();
+        // destinationHeader.Print(std::cout);
         // destinationHeader.Print(std::cout); simply does not work
 
         // send to 
@@ -495,7 +496,7 @@ void master::HandleSend(uint16_t data)
 {
     MyHeader Sendnode;
     Sendnode.SetData(data);
-    Sendnode.Print(std::cout);
+    // Sendnode.Print(std::cout);
     Ptr<Packet> packet = new Packet();
     packet->AddHeader(Sendnode);
 
@@ -540,6 +541,12 @@ void mapper::StartApplication()
     _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead, this));
 }
 
+// static void SendMappedData (Ptr<Socket> sock, char m_data)
+// {
+//     Ptr<Packet> packet = new Packet();
+
+// }
+
 void mapper::HandleRead (Ptr<Socket> socket)
 {
     Ptr<Packet> packet;
@@ -554,15 +561,15 @@ void mapper::HandleRead (Ptr<Socket> socket)
         MyHeader receiverHeader;
 
         packet->RemoveHeader (receiverHeader);
+        receiverHeader.Print(std::cout);
 
         uint16_t test = receiverHeader.GetData();
-
         char sendChar = _umap[test];
         uint16_t sendData = static_cast<uint16_t>(sendChar);        
-
+        
         MyHeader sendHeader;
         sendHeader.SetData (sendData);
-        sendHeader.Print(std::cout);
+        // sendHeader.Print(std::cout);
 
         Ptr<Packet> sendPacket = new Packet();
         sendPacket->AddHeader (sendHeader);            
@@ -585,6 +592,23 @@ void mapper::InitMap()
         _umap[6] = 'g';
         _umap[7] = 'h';
         _umap[8] = 'i';
+        _umap[9] = 'j';
+        _umap[10] = 'k';
+        _umap[11] = 'l';
+        _umap[12] = 'm';
+        _umap[13] = 'n';
+        _umap[14] = 'o';
+        _umap[15] = 'p';
+        _umap[16] = 'q';
+        _umap[17] = 'r';
+        _umap[18] = 's';
+        _umap[19] = 't';
+        _umap[20] = 'u';
+        _umap[21] = 'v';
+        _umap[22] = 'w';
+        _umap[23] = 'x';
+        _umap[24] = 'y';
+        _umap[25] = 'z';
     }
     else if(_mapper_number == 1)
     {
