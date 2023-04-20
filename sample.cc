@@ -202,16 +202,21 @@ private:
 class mapper: public Application
 {
 public:
-    mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i);
+    mapper(uint16_t port, Ipv4InterfaceContainer& ip,
+        uint8_t i, Ipv4InterfaceContainer& client_ip);
     virtual ~mapper();
 private:
-    virtual void StartApplication();
+    virtual void StartApplication ();
+    void HandleRead (Ptr<Socket> socket);
+    void InitMap();
 
     uint16_t _port;
     Ptr<Socket> _rec_socket;
     Ptr<Socket> _send_socket;
     Ipv4InterfaceContainer _ip;
+    Ipv4InterfaceContainer _client_ip;
     uint8_t _mapper_number;
+    std::unordered_map<uint16_t, char>  _umap;
 };
 
 static const int MAX_MAPPER = 1;
@@ -325,7 +330,7 @@ main (int argc, char *argv[])
     staNodeClientInterface = address.Assign (staDeviceClient);
     staNodesMasterInterface = address.Assign (staDeviceMaster);
     mapperIPInterface = address.Assign (mapperNetDeviceConatainer);
-    
+
     Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
     uint16_t port = 1102;
@@ -343,7 +348,7 @@ main (int argc, char *argv[])
     masterApp->SetStopTime (Seconds (duration));  
 
     // Creating Mapper
-    for (int mapper_num = 0; mapper_num < MAX_MAPPER; mapper_num++)
+    for (uint8_t mapper_num = 0; mapper_num < MAX_MAPPER; mapper_num++)
     {
         Ptr<mapper> mapperApp = CreateObject<mapper> (port,
                                                     mapperIPInterface,
@@ -399,7 +404,7 @@ void
 client::StartApplication (void)
 {
     Ptr<Socket> sock = Socket::CreateSocket (GetNode (),
-                        TcpSocketFactory::GetTypeId ());
+                        UdpSocketFactory::GetTypeId ());
     InetSocketAddress sockAddr (_ip.GetAddress(0), _port);
     sock->Connect (sockAddr);
 
@@ -480,21 +485,92 @@ void master::ConnectToMappers(Ipv4InterfaceContainer& m_ips)
     }
 }
 
-mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i)
-        :   _port (port),
-            _ip (ip),
-            _mapper_number (i)
+mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i, Ipv4InterfaceContainer& send_ip)
 {
-    _rec_socket = Socket::CreateSocket(GetNode (),
-                    TcpSocketFactory::GetTypeId());
-    InetSocketAddress sockadr = InetSocketAddress (_ip.GetAddress(i), _port);
-    _rec_socket->Bind (sockadr);
-    _rec_socket->Listen();
+    _port = port;
+    _ip = ip;
+    _mapper_number = i;
+    srand(time(NULL));
 }
 
 void mapper::StartApplication()
 {
-    // _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead));
+    InitMap();
+   _rec_socket = Socket::CreateSocket(GetNode (),
+                TcpSocketFactory::GetTypeId());
+    InetSocketAddress sockadr = InetSocketAddress (_ip.GetAddress(_mapper_number), _port);
+    _rec_socket->Bind (sockadr);
+    _rec_socket->Listen();
+    
+    _send_socket = Socket::CreateSocket(GetNode (),
+                    UdpSocketFactory::GetTypeId ());
+    InetSocketAddress cli_sockadr = InetSocketAddress (_client_ip.GetAddress(0), _port);
+    _send_socket->Connect(cli_sockadr);
+    _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead, this));
+}
+
+void mapper::HandleRead (Ptr<Socket> socket)
+{
+    Ptr<Packet> packet;
+
+    while ((packet = socket->Recv ()))
+    {
+        if (packet->GetSize () == 0)
+        {
+            break;
+        }
+
+        MyHeader receiverHeader;
+
+        packet->RemoveHeader (receiverHeader);
+
+        uint16_t test = receiverHeader.GetData();
+
+        char sendChar = _umap[test];
+        uint16_t sendData = static_cast<uint16_t>(sendChar);        
+
+        MyHeader sendHeader;
+        sendHeader.SetData (sendData);
+        sendHeader.Print(std::cout);
+
+        Ptr<Packet> sendPacket = new Packet();
+        sendPacket->AddHeader (sendHeader);            
+
+        _send_socket->Send (sendPacket);
+    }
+}
+
+
+void mapper::InitMap()
+{
+    if(_mapper_number == 0)
+    {
+        _umap[0] = 'a';
+        _umap[1] = 'b';
+        _umap[2] = 'c';
+        _umap[3] = 'd';
+        _umap[4] = 'e';
+        _umap[5] = 'f';
+        _umap[6] = 'g';
+        _umap[7] = 'h';
+        _umap[8] = 'i';
+    }
+    else if(_mapper_number == 1)
+    {
+
+    }
+    else if(_mapper_number == 2)
+    {
+
+    }
+    else
+    {
+        // error
+    }
+}
+
+mapper::~mapper()
+{
 }
 
 mapper::~mapper()
