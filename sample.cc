@@ -1,5 +1,5 @@
 #include <cstdlib>
-#include<time.h>
+#include <time.h>
 #include <stdio.h>
 #include <string>
 #include <fstream>
@@ -26,6 +26,7 @@
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/traffic-control-module.h"
 #include "ns3/flow-monitor-module.h"
+#include <sys/socket.h>
 
 using namespace ns3;
 using namespace std;
@@ -43,11 +44,11 @@ ThroughputMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon, double
     {
         Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
 
-        std::cout << "Flow ID			: "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
+        std::cout << "Flow ID      : "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
         std::cout << "Tx Packets = " << stats->second.txPackets << std::endl;
         std::cout << "Rx Packets = " << stats->second.rxPackets << std::endl;
-        std::cout << "Duration		: "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
-        std::cout << "Last Received Packet	: "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
+        std::cout << "Duration    : "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
+        std::cout << "Last Received Packet  : "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
         std::cout << "Throughput: " << stats->second.rxBytes * 8.0 / (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) / 1024 / 1024  << " Mbps" << std::endl;
     
         i++;
@@ -68,11 +69,11 @@ AverageDelayMonitor (FlowMonitorHelper *fmhelper, Ptr<FlowMonitor> flowMon, doub
     for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator stats = flowStats.begin (); stats != flowStats.end (); ++stats)
     {
         Ipv4FlowClassifier::FiveTuple fiveTuple = classing->FindFlow (stats->first);
-        std::cout << "Flow ID			: "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
+        std::cout << "Flow ID      : "<< stats->first << " ; " << fiveTuple.sourceAddress << " -----> " << fiveTuple.destinationAddress << std::endl;
         std::cout << "Tx Packets = " << stats->second.txPackets << std::endl;
         std::cout << "Rx Packets = " << stats->second.rxPackets << std::endl;
-        std::cout << "Duration		: "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
-        std::cout << "Last Received Packet	: "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
+        std::cout << "Duration    : "<< (stats->second.timeLastRxPacket.GetSeconds () - stats->second.timeFirstTxPacket.GetSeconds ()) << std::endl;
+        std::cout << "Last Received Packet  : "<< stats->second.timeLastRxPacket.GetSeconds () << " Seconds" << std::endl;
         std::cout << "Sum of e2e Delay: " << stats->second.delaySum.GetSeconds () << " s" << std::endl;
         std::cout << "Average of e2e Delay: " << stats->second.delaySum.GetSeconds () / stats->second.rxPackets << " s" << std::endl;
     
@@ -171,10 +172,14 @@ public:
 private:
     virtual void StartApplication (void);
     void HandleRead (Ptr<Socket> socket);
+    void ConnectToMappers(Ipv4InterfaceContainer& m_ips);
+    // void SendToMappers()
+    void HandleSend (Ptr<Socket> socket);
 
-    uint16_t port;
-    Ipv4InterfaceContainer ip;
-    Ptr<Socket> socket;
+    uint16_t _port;
+    Ipv4InterfaceContainer _ip;
+    Ptr<Socket> _rec_socket;
+    vector< Ptr<Socket> > _mapper_sockets;
 };
 
 
@@ -182,20 +187,43 @@ class client : public Application
 {
 public:
     client (uint16_t port, Ipv4InterfaceContainer& ip);
+    
     virtual ~client ();
+    
 
 private:
     virtual void StartApplication (void);
+    void HandleRead (Ptr<Socket> socket);
 
-    uint16_t port;
-    Ptr<Socket> socket;
-    Ipv4InterfaceContainer ip;
+    uint16_t _port;
+    // Ptr<Socket> _socket; not needed
+    Ipv4InterfaceContainer _ip;
+    Ptr<Socket> _rec_socket;
 };
 
+
+class mapper: public Application
+{
+public:
+    mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i);
+    virtual ~mapper();
+private:
+    virtual void StartApplication();
+
+    uint16_t _port;
+    Ptr<Socket> _rec_socket;
+    Ptr<Socket> _send_socket;
+    Ipv4InterfaceContainer _ip;
+    uint8_t _mapper_number;
+};
+
+static const int MAX_MAPPER = 1;
 
 int
 main (int argc, char *argv[])
 {
+    // Packet::EnablePrinting();
+    // PacketMetadata::Enable();
     double error = 0.000001;
     string bandwidth = "1Mbps";
     bool verbose = true;
@@ -216,12 +244,6 @@ main (int argc, char *argv[])
         LogComponentEnable ("UdpEchoServerApplication", LOG_LEVEL_INFO);
     }
 
-    NodeContainer wifiStaNodeClient;
-    wifiStaNodeClient.Create (1);
-
-    NodeContainer wifiStaNodeMaster;
-    wifiStaNodeMaster.Create (1);
-
     YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
 
     YansWifiPhyHelper phy;
@@ -232,24 +254,43 @@ main (int argc, char *argv[])
 
     WifiMacHelper mac;
     Ssid ssid = Ssid ("ns-3-ssid");
-    mac.SetType ("ns3::StaWifiMac",
-                 "Ssid", SsidValue (ssid),
-                 "ActiveProbing", BooleanValue (false));
+
+    // Node Containers:
+    NodeContainer wifiStaNodeClient;
+    wifiStaNodeClient.Create (1);
+
+    NodeContainer wifiStaNodeMaster;
+    wifiStaNodeMaster.Create (1);
+
+    NodeContainer mapperNodeContainer;
+    mapperNodeContainer.Create (MAX_MAPPER);
+
+    // Net Device Container:
+    NetDeviceContainer mapperNetDeviceConatainer;
 
     NetDeviceContainer staDeviceClient;
-    staDeviceClient = wifi.Install (phy, mac, wifiStaNodeClient);
-
-    mac.SetType ("ns3::ApWifiMac", "Ssid", SsidValue (ssid));
 
     NetDeviceContainer staDeviceMaster;
+
+
+    // Installing WiFi on the corresponding Net Devices for Nodes in the Node Container
+    mac.SetType ("ns3::ApWifiMac", "Ssid", SsidValue (ssid));
     staDeviceMaster = wifi.Install (phy, mac, wifiStaNodeMaster);
 
-    mac.SetType ("ns3::StaWifiMac","Ssid", SsidValue (ssid), "ActiveProbing", BooleanValue (false));
+    mac.SetType ("ns3::StaWifiMac",
+                "Ssid", SsidValue (ssid),
+                "ActiveProbing",
+                BooleanValue (false));
 
+    staDeviceClient = wifi.Install (phy, mac, wifiStaNodeClient);
+    mapperNetDeviceConatainer = wifi.Install (phy, mac, mapperNodeContainer);
+    
+    // Initializing error values
     Ptr<RateErrorModel> em = CreateObject<RateErrorModel> ();
     em->SetAttribute ("ErrorRate", DoubleValue (error));
-    phy.SetErrorRateModel("ns3::YansErrorRateModel");
+    phy.SetErrorRateModel ("ns3::YansErrorRateModel");
 
+    // Setup mobility
     MobilityHelper mobility;
 
     mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
@@ -259,41 +300,63 @@ main (int argc, char *argv[])
                                    "DeltaY", DoubleValue (10.0),
                                    "GridWidth", UintegerValue (3),
                                    "LayoutType", StringValue ("RowFirst"));
-
+    // Walking mobility
     mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                               "Bounds", RectangleValue (Rectangle (-50, 50, -50, 50)));
+                               "Bounds",
+                                RectangleValue (Rectangle (-50, 50, -50, 50)));
     mobility.Install (wifiStaNodeClient);
 
+    // Standstill mobility
     mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
     mobility.Install (wifiStaNodeMaster);
+    mobility.Install (mapperNodeContainer);
 
+    // Adding nodes to the event tracker stack
     InternetStackHelper stack;
     stack.Install (wifiStaNodeClient);
     stack.Install (wifiStaNodeMaster);
+    stack.Install (mapperNodeContainer);
 
+    // Assigning IPs
     Ipv4AddressHelper address;
 
     Ipv4InterfaceContainer staNodeClientInterface;
     Ipv4InterfaceContainer staNodesMasterInterface;
+    Ipv4InterfaceContainer mapperIPInterface;
 
     address.SetBase ("10.1.3.0", "255.255.255.0");
     staNodeClientInterface = address.Assign (staDeviceClient);
     staNodesMasterInterface = address.Assign (staDeviceMaster);
-
+    mapperIPInterface = address.Assign (mapperNetDeviceConatainer);
+    
     Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
     uint16_t port = 1102;
 
+    // Creating Client
     Ptr<client> clientApp = CreateObject<client> (port, staNodesMasterInterface);
     wifiStaNodeClient.Get (0)->AddApplication (clientApp);
     clientApp->SetStartTime (Seconds (0.0));
     clientApp->SetStopTime (Seconds (duration));  
 
+    // Creating Master
     Ptr<master> masterApp = CreateObject<master> (port, staNodesMasterInterface);
     wifiStaNodeMaster.Get (0)->AddApplication (masterApp);
     masterApp->SetStartTime (Seconds (0.0));
     masterApp->SetStopTime (Seconds (duration));  
 
+    // Creating Mapper
+    for (int mapper_num = 0; mapper_num < MAX_MAPPER; mapper_num++)
+    {
+        Ptr<mapper> mapperApp = CreateObject<mapper> (port,
+                                                    mapperIPInterface,
+                                                    mapper_num);
+        mapperNodeContainer.Get (0)->AddApplication(mapperApp);
+        mapperApp->SetStartTime (Seconds (0.0));
+        mapperApp->SetStopTime (Seconds (duration));
+    }
+
+    // Logging
     NS_LOG_INFO ("Run Simulation");
 
     Ptr<FlowMonitor> flowMonitor;
@@ -310,8 +373,8 @@ main (int argc, char *argv[])
 }
 
 client::client (uint16_t port, Ipv4InterfaceContainer& ip)
-        : port (port),
-          ip (ip)
+        : _port (port),
+          _ip (ip)
 {
     std::srand (time(0));
 }
@@ -327,8 +390,8 @@ static void GenerateTraffic (Ptr<Socket> socket, uint16_t data)
     m.SetData(data);
 
     packet->AddHeader (m);
-    packet->Print (std::cout);
-    socket->Send(packet);
+    // packet->Print (std::cout); does not work without one of the two functions commented at the top of int main
+    socket->Send (packet);
 
     Simulator::Schedule (Seconds (0.1), &GenerateTraffic, socket, rand() % 26);
 }
@@ -336,16 +399,23 @@ static void GenerateTraffic (Ptr<Socket> socket, uint16_t data)
 void
 client::StartApplication (void)
 {
-    Ptr<Socket> sock = Socket::CreateSocket (GetNode (), UdpSocketFactory::GetTypeId ());
-    InetSocketAddress sockAddr (ip.GetAddress(0), port);
+    Ptr<Socket> sock = Socket::CreateSocket (GetNode (),
+                        UdpSocketFactory::GetTypeId ());
+    InetSocketAddress sockAddr (_ip.GetAddress(0), _port);
     sock->Connect (sockAddr);
 
-    GenerateTraffic(sock, 0);
+    GenerateTraffic (sock, 0);
+
+    _rec_socket = Socket::CreateSocket (GetNode (),
+                    UdpSocketFactory::GetTypeId ());
+    InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
+    _rec_socket->Bind (local);
+    _rec_socket->SetRecvCallback (MakeCallback (&client::HandleRead, this));
 }
 
 master::master (uint16_t port, Ipv4InterfaceContainer& ip)
-        : port (port),
-          ip (ip)
+        : _port (port),
+          _ip (ip)
 {
     std::srand (time(0));
 }
@@ -357,11 +427,14 @@ master::~master ()
 void
 master::StartApplication (void)
 {
-    socket = Socket::CreateSocket (GetNode (), UdpSocketFactory::GetTypeId ());
-    InetSocketAddress local = InetSocketAddress (ip.GetAddress(0), port);
-    socket->Bind (local);
-
-    socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
+    _rec_socket = Socket::CreateSocket (GetNode (),
+                    UdpSocketFactory::GetTypeId ());
+    InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
+    _rec_socket->Bind (local);
+    // Ptr<Node> nodeptr = _rec_socket->GetNode (); not needed
+    // ConnectToMappers()
+    _rec_socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
+    // socket->SetSendCallback (MakeCallback (&master::HandleSend, this));
 }
 
 void 
@@ -377,7 +450,56 @@ master::HandleRead (Ptr<Socket> socket)
         }
 
         MyHeader destinationHeader;
+        // packet->Print(std::cout); simply does not work
         packet->RemoveHeader (destinationHeader);
-        destinationHeader.Print(std::cout);
+        // destinationHeader.Print(std::cout); simply does not work
+
+        // send to 
+    }
+}
+
+void master::ConnectToMappers(Ipv4InterfaceContainer& m_ips)
+{
+    for (int i_s = 0; i_s < m_ips.GetN(); i_s++)
+    {
+        Ptr<Socket> i_socket = Socket::CreateSocket (GetNode(), 
+                                TcpSocketFactory::GetTypeId());
+        i_socket->Connect(InetSocketAddress(m_ips.GetAddress(i_s), _port));
+        _mapper_sockets.push_back(i_socket);
+    }
+}
+
+mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i)
+        :   _port (port),
+            _ip (ip),
+            _mapper_number (i)
+{
+    _rec_socket = Socket::CreateSocket(GetNode (),
+                    TcpSocketFactory::GetTypeId());
+    InetSocketAddress sockadr = InetSocketAddress (_ip.GetAddress(i), _port);
+    _rec_socket->Bind (sockadr);
+    _rec_socket->Listen();
+}
+
+void mapper::StartApplication()
+{
+    // _rec_socket->SetRecvCallback (MakeCallback (&mapper::HandleRead));
+}
+
+void client::HandleRead (Ptr<Socket> socket)
+{
+    Ptr<Packet> packet;
+
+    while ((packet = socket->Recv ()))
+    {
+        if (packet->GetSize () == 0)
+        {
+            break;
+        }
+        
+        MyHeader destinationHeader;
+        // packet->Print(std::cout); simply does not work
+        packet->RemoveHeader (destinationHeader);
+        // destinationHeader.Print(std::cout); simply does not work 
     }
 }
