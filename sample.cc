@@ -352,7 +352,8 @@ main (int argc, char *argv[])
     {
         Ptr<mapper> mapperApp = CreateObject<mapper> (port,
                                                     mapperIPInterface,
-                                                    mapper_num);
+                                                    mapper_num,
+                                                    staNodeClientInterface);
         mapperNodeContainer.Get (mapper_num)->AddApplication(mapperApp);
         mapperApp->SetStartTime (Seconds (0.0));
         mapperApp->SetStopTime (Seconds (duration));
@@ -485,12 +486,12 @@ void master::ConnectToMappers(Ipv4InterfaceContainer& m_ips)
     }
 }
 
-mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i, Ipv4InterfaceContainer& send_ip)
+mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i, Ipv4InterfaceContainer& client_ip)
 {
     _port = port;
     _ip = ip;
     _mapper_number = i;
-    srand(time(NULL));
+    _client_ip = client_ip;
 }
 
 void mapper::StartApplication()
@@ -567,10 +568,6 @@ void mapper::InitMap()
     {
         // error
     }
-}
-
-mapper::~mapper()
-{
 }
 
 mapper::~mapper()
