@@ -26,7 +26,6 @@
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/traffic-control-module.h"
 #include "ns3/flow-monitor-module.h"
-#include <sys/socket.h>
 
 using namespace ns3;
 using namespace std;
@@ -187,15 +186,20 @@ private:
 class client : public Application
 {
 public:
-    client (uint16_t port, Ipv4InterfaceContainer& ip);
+    client (uint16_t port, Ipv4InterfaceContainer& ip , Ipv4InterfaceContainer& self_ip);
+    
     virtual ~client ();
+    
 
 private:
     virtual void StartApplication (void);
+    void HandleRead (Ptr<Socket> socket);
 
     uint16_t _port;
     // Ptr<Socket> _socket; not needed
     Ipv4InterfaceContainer _ip;
+    Ipv4InterfaceContainer _self_ip;
+    Ptr<Socket> _rec_socket;
 };
 
 
@@ -336,7 +340,7 @@ main (int argc, char *argv[])
     uint16_t port = 1102;
 
     // Creating Client
-    Ptr<client> clientApp = CreateObject<client> (port, staNodesMasterInterface);
+    Ptr<client> clientApp = CreateObject<client> (port, staNodesMasterInterface , staNodeClientInterface);
     wifiStaNodeClient.Get (0)->AddApplication (clientApp);
     clientApp->SetStartTime (Seconds (0.0));
     clientApp->SetStopTime (Seconds (duration));  
@@ -377,9 +381,10 @@ main (int argc, char *argv[])
 
 
 
-client::client (uint16_t port, Ipv4InterfaceContainer& ip)
+client::client (uint16_t port, Ipv4InterfaceContainer& ip , Ipv4InterfaceContainer& self_ip)
         : _port (port),
-          _ip (ip)
+          _ip (ip),
+          _self_ip(self_ip)
 {
     std::srand (time(0));
 }
@@ -406,10 +411,16 @@ client::StartApplication (void)
 {
     Ptr<Socket> sock = Socket::CreateSocket (GetNode (),
                         UdpSocketFactory::GetTypeId ());
-    InetSocketAddress sockAddr (_ip.GetAddress(0), _port);
+    InetSocketAddress sockAddr (_self_ip.GetAddress(0), _port);
     sock->Connect (sockAddr);
 
     GenerateTraffic (sock, 0);
+
+    _rec_socket = Socket::CreateSocket (GetNode (),
+                    UdpSocketFactory::GetTypeId ());
+    InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
+    _rec_socket->Bind (local);
+    _rec_socket->SetRecvCallback (MakeCallback (&client::HandleRead, this));
 }
 
 master::master (uint16_t port, Ipv4InterfaceContainer& ip,Ipv4InterfaceContainer& node_ip)
