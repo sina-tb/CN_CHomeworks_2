@@ -174,7 +174,7 @@ private:
     void HandleRead (Ptr<Socket> socket);
     void ConnectToMappers(Ipv4InterfaceContainer& m_ips);
     // void SendToMappers()
-    void HandleSend (uint16_t data);
+    void HandleSend (Ptr<Packet> send_packet);
 
     uint16_t _port;
     Ipv4InterfaceContainer _ip;
@@ -226,7 +226,7 @@ private:
     std::unordered_map<uint16_t, char>  _umap;
 };
 
-static const int MAX_MAPPER = 3;
+static const int MAX_MAPPER = 4;
 
 int
 main (int argc, char *argv[])
@@ -305,19 +305,20 @@ main (int argc, char *argv[])
     mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
                                    "MinX", DoubleValue (0.0),
                                    "MinY", DoubleValue (0.0),
-                                   "DeltaX", DoubleValue (5.0),
-                                   "DeltaY", DoubleValue (10.0),
-                                   "GridWidth", UintegerValue (3),
+                                   "DeltaX", DoubleValue (2.0),
+                                   "DeltaY", DoubleValue (7.0),
+                                   "GridWidth", UintegerValue (1),
                                    "LayoutType", StringValue ("RowFirst"));
     // Walking mobility
     mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
                                "Bounds",
-                                RectangleValue (Rectangle (-50, 50, -50, 50)));
+                                RectangleValue (Rectangle (-20, 20, -20, 20)));
     mobility.Install (wifiStaNodeClient);
 
     // Standstill mobility
     mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
     mobility.Install (wifiStaNodeMaster);
+    mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
     mobility.Install (mapperNodeContainer);
 
     // Adding nodes to the event tracker stack
@@ -355,13 +356,16 @@ main (int argc, char *argv[])
     masterApp->SetStopTime (Seconds (duration));  
 
     // Creating Mapper
-        Ptr<mapper> mapperApp = CreateObject<mapper> (port,
-                                                    mapperIPInterface,
-                                                    0,
-                                                    staNodeClientInterface);
-        mapperNodeContainer.Get (0)->AddApplication(mapperApp);
-        mapperApp->SetStartTime (Seconds (0.0));
-        mapperApp->SetStopTime (Seconds (duration));
+        for (int mapper_num = 0; mapper_num < MAX_MAPPER; mapper_num++)
+        {
+            Ptr<mapper> mapperApp = CreateObject<mapper> (port,
+                                            mapperIPInterface,
+                                            mapper_num,
+                                            staNodeClientInterface);
+            mapperNodeContainer.Get (mapper_num)->AddApplication(mapperApp);
+            mapperApp->SetStartTime (Seconds (0.0));
+            mapperApp->SetStopTime (Seconds (duration));
+        }
 
     // Logging
     NS_LOG_INFO ("Run Simulation");
@@ -398,7 +402,7 @@ static void GenerateTraffic (Ptr<Socket> socket, uint16_t data)
     Ptr<Packet> packet = new Packet();
     MyHeader m;
     m.SetData(data);
-
+    cout << "client sent: " << data << endl;
     packet->AddHeader (m);
     // packet->Print (std::cout); does not work without one of the two functions commented at the top of int main
     socket->Send (packet);
@@ -459,17 +463,17 @@ master::~master ()
 void
 master::StartApplication (void)
 {
-    int rec_bind, send_con;
+    // int rec_bind, send_con;
     _rec_socket = Socket::CreateSocket (GetNode (),
                     UdpSocketFactory::GetTypeId ());
     InetSocketAddress local = InetSocketAddress (_ip.GetAddress(0), _port);
-    rec_bind = _rec_socket->Bind (local);
-    cout << rec_bind <<endl;
+    _rec_socket->Bind (local);
+    // cout << rec_bind <<endl;
     _send_so = Socket::CreateSocket (GetNode(),
                 TcpSocketFactory::GetTypeId());
     InetSocketAddress send_sockadr = InetSocketAddress(_node_ip.GetAddress(0), _port);
-    send_con = _send_so->Connect(send_sockadr);
-    cout << send_con << endl;
+    _send_so->Connect(send_sockadr);
+    // cout << send_con << endl;
     // Ptr<Node> nodeptr = _rec_socket->GetNode (); not needed
     _rec_socket->SetRecvCallback (MakeCallback (&master::HandleRead, this));
     ConnectToMappers(_node_ip);
@@ -493,36 +497,36 @@ master::HandleRead (Ptr<Socket> socket)
         MyHeader destinationHeader;
         // packet->Print(std::cout); simply does not work
         // packet->Print(std::cout);
-        packet->RemoveHeader (destinationHeader);
+        // packet->RemoveHeader (destinationHeader);
         // packet->Print(std::cout);
-        uint16_t data = destinationHeader.GetData();
+        // uint16_t data = destinationHeader.GetData();
 
         // destinationHeader.Print(std::cout);
         // destinationHeader.Print(std::cout); simply does not work
 
         // send to 
-        MyHeader Sendnode;
-        Sendnode.SetData(data);
-        // Sendnode.Print(std::cout);
-        Ptr<Packet> pac = new Packet();
-        packet->AddHeader(Sendnode);
-        _send_so->Send(pac);
-        // HandleSend(data);
+        // MyHeader Sendnode;
+        // Sendnode.SetData(data);
+        // // Sendnode.Print(std::cout);
+        // Ptr<Packet> pac = new Packet();
+        // packet->AddHeader(Sendnode);
+        // _send_so->Send(packet);
+        HandleSend(packet);
     }
 }
 
-void master::HandleSend(uint16_t data)
+void master::HandleSend(Ptr<Packet> send_packet)
 {
-    MyHeader Sendnode;
-    Sendnode.SetData(data);
-    // Sendnode.Print(std::cout);
-    Ptr<Packet> packet = new Packet();
-    packet->AddHeader(Sendnode);
-    int test;
+    // MyHeader Sendnode;
+    // Sendnode.SetData(data);
+    // // Sendnode.Print(std::cout);
+    // Ptr<Packet> packet = new Packet();
+    // packet->AddHeader(Sendnode);
+    // int test;
     for(int i = 0; i < MAX_MAPPER; i++)
     {
-        test = _mapper_sockets [i] -> Send (packet);
-        cout << test << endl;
+        _mapper_sockets [i] -> Send (send_packet);
+        // cout << test << endl;
     }
 }
 
@@ -548,15 +552,15 @@ mapper::mapper(uint16_t port, Ipv4InterfaceContainer& ip, uint8_t i, Ipv4Interfa
 void mapper::StartApplication()
 {
 
-    int rec_bind, rec_lis;
+    // int rec_bind, rec_lis;
     InitMap();
    _rec_socket = Socket::CreateSocket(GetNode (),
                     TcpSocketFactory::GetTypeId());
     InetSocketAddress sockadr = InetSocketAddress (_ip.GetAddress(_mapper_number), _port);
-    rec_bind = _rec_socket->Bind (sockadr);
-    cout << rec_bind;
-    rec_lis = _rec_socket->Listen();
-    cout << rec_lis;
+    _rec_socket->Bind (sockadr);
+    // cout << rec_bind;
+    _rec_socket->Listen();
+    // cout << rec_lis;
     _rec_socket->SetAcceptCallback(MakeNullCallback<bool,
                                         Ptr<Socket>,
                                         const Address&>(),
@@ -579,25 +583,26 @@ void mapper::HandleRead (Ptr<Socket>socket)
         {
             break;
         }
-        packet->Print(std::cout);
+        // packet->Print(std::cout);
         MyHeader receiverHeader;
 
         packet->RemoveHeader (receiverHeader);
-        receiverHeader.Print(std::cout);
+        // receiverHeader.Print(std::cout);
 
         uint16_t test = receiverHeader.GetData();
         char sendChar = _umap[test];
+        // cout << "from mapper : " << _mapper_number << " I got this: " << test << endl;
         if(sendChar != 0)
         {
             uint16_t sendData = static_cast<uint16_t>(sendChar);        
 
             MyHeader sendHeader;
             sendHeader.SetData (sendData);
-
+            // cout << "this packet : "<< sendData << endl;
             Ptr<Packet> sendPacket = new Packet();
             sendPacket->AddHeader (sendHeader);            
-            sendHeader.Print(std::cout);
-            sendPacket->Print(std::cout);
+            // sendHeader.Print(std::cout);
+            // sendPacket->Print(std::cout);
             _send_socket->Send (sendPacket);
         }
     }
