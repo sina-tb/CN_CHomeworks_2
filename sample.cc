@@ -423,6 +423,25 @@ client::StartApplication (void)
     _rec_socket->SetRecvCallback (MakeCallback (&client::HandleRead, this));
 }
 
+void client::HandleRead (Ptr<Socket> socket)
+{
+    Ptr<Packet> packet;
+
+    while ((packet = socket->Recv ()))
+    {
+        if (packet->GetSize () == 0)
+        {
+            break;
+        }
+        
+        MyHeader destinationHeader;
+        // packet->Print(std::cout); simply does not work
+        packet->RemoveHeader (destinationHeader);
+        // destinationHeader.Print(std::cout); simply does not work 
+    }
+}
+
+
 master::master (uint16_t port, Ipv4InterfaceContainer& ip,Ipv4InterfaceContainer& node_ip)
         : _port (port),
           _ip (ip),
